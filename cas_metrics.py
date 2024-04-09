@@ -5,12 +5,29 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 import requests as req
 
+
+# ANSI color codes
+class Colors:
+    RED = '\033[91m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    END = '\033[0m'
+
+def color_print(text, color, file=None):
+    print(color + text + Colors.END, file=file)
+
 api = os.getenv('PRISMA_API_URL')
 username = os.getenv('PRISMA_ACCESS_KEY_ID')
 password = os.getenv('PRISMA_SECRET_KEY')
 
+if api is None:
+    color_print("Missing PRISMA_API_URL environment variable",Colors.RED, file=sys.stderr)
+if username is None:
+    color_print("Missing PRISMA_ACCESS_KEY_ID environment variable", Colors.RED, file=sys.stderr)
+if password is None:
+    color_print("Missing PRISMA_SECRET_KEY environment variable", Colors.RED, file=sys.stderr)
+
 if api is None or username is None or password is None:
-    print('Missing environment variables')
     sys.exit(1)
 
 # Get current date
@@ -24,16 +41,6 @@ six_months_ago = current_date - timedelta(days=30 * 6)
 one_month_ago_formatted = one_month_ago.strftime("%Y-%m-%d 00:00:00.000")
 six_months_ago_formatted = six_months_ago.strftime("%Y-%m-%d 00:00:00.000")
 
-
-# ANSI color codes
-class Colors:
-    RED = '\033[91m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    END = '\033[0m'
-
-def color_print(text, color):
-    print(color + text + Colors.END)
 
 def authenticate():
     payload = {'username': username, 'password': password}
@@ -71,14 +78,22 @@ def get_cicd_findings():
     payload = {"status": "open", "severities": ["critical", "high", "medium"]}
     result = make_request("POST","bridgecrew/api/v1/pipeline-risks/export", payload)
     percentage_fixed = get_fixed_percentage(result.text)
-    color_print("20 percent of Medium/High CI/CD Findings Fixed:{}".format(percentage_fixed), Colors.GREEN)
+    if percentage_fixed >= 20:
+        color_print("20 percent of Medium/High CI/CD Findings Fixed: True - {}%".format(percentage_fixed), Colors.GREEN)
+    else:
+        color_print("20 percent of Medium/High CI/CD Findings Fixed: False - {}%".format(percentage_fixed), Colors.RED)
+    
 
 
 def get_all_cicd_findings():
     payload = {"status": "open", "severities": ["critical", "high", "medium", "low", "informational"]}
     result = make_request("POST", "bridgecrew/api/v1/pipeline-risks/export", payload)
     percentage_fixed = get_fixed_percentage(result.text)
-    print("80% of all risks are prevented in the pipeline:", percentage_fixed, "%")
+    if percentage_fixed >= 80:
+        color_print("80% of all risks are prevented in the pipeline: True - {}%".format(percentage_fixed), Colors.GREEN)
+    else:
+        color_print("80% of all risks are prevented in the pipeline: False - {}%".format(percentage_fixed), Colors.RED)
+    
 
 
 def get_vcs_scan_findings():
@@ -98,7 +113,11 @@ def get_vcs_scan_findings():
     percentage_fixedX = round((total_fixed_countX / total_open_countX) * 100, 0)
     percentage_fixedY = round((total_fixed_countY / total_open_countY) * 100, 0)
     result = percentage_fixedY - percentage_fixedX
-    print("10% increase in Number of fixed vs opened code security issue:", result, "%")
+    if result >= 10:
+        color_print("10% increase in Number of fixed vs opened code security issue: True - {}%".format(result), Colors.GREEN)
+    else:
+        color_print("10% increase in Number of fixed vs opened code security issue: False - {}%".format(result), Colors.RED)
+    
 
 
 def get_vcs_scan_secret_findings():
@@ -116,17 +135,17 @@ def get_vcs_scan_secret_findings():
         total_fixed_count += int(entry['fixedCount'])
 
 
-    # Calculate the percentage of not fixed events
     percentage_fixed = round((total_fixed_count / total_open_count) * 100, 0)
 
     # Check if percentage is 50 or more, then print "Passed"
-    if percentage_fixed >= 50:
-        print("50% reduction of secret exposure: True",percentage_fixed,"%")
+    if percentage_fixed >= 50 and percentage_fixed <= 79:
+        color_print("50% reduction of secret exposure: True - {}%".format(percentage_fixed), Colors.YELLOW)
     elif percentage_fixed >= 80:
-        print("80% reduction of secret exposure: True", percentage_fixed,"%")
+        color_print("50% reduction of secret exposure: True - {}%".format(percentage_fixed), Colors.YELLOW)
+        color_print("80% reduction of secret exposure: True - {}%".format(percentage_fixed), Colors.GREEN)
     else:
-        print("50% reduction of secret exposure: False", percentage_fixed,"%")
-        print("80% reduction of secret exposure: False", percentage_fixed,"%")
+        color_print("50% reduction of secret exposure: False - {}%".format(percentage_fixed), Colors.RED)
+        color_print("80% reduction of secret exposure: False - {}%".format(percentage_fixed), Colors.RED)
 
 
 
@@ -136,14 +155,17 @@ def get_pipeline_runs_data():
     total_events = len(data)
     hard_fail_events = sum(1 for event in data if event["scanStatus"] == "HARD_FAIL")
     percentage_fixed = round((hard_fail_events / total_events) * 100, 0)
-    print("80% of High code issues blocked:", percentage_fixed, "%")
+    if percentage_fixed >= 80:
+        color_print("80% of High code issues blocked: True - {}%".format(percentage_fixed), Colors.GREEN)
+    else:
+        color_print("80% of High code issues blocked: False - {}%".format(percentage_fixed), Colors.RED)
 
 
 if __name__ == '__main__':
-    print('Get CAS Metrics -  0.0.1')
+    color_print("Get CAS Metrics -  v1.0 - Initiated", Colors.GREEN)
     get_cicd_findings()
     get_all_cicd_findings()
     get_vcs_scan_findings()
     get_vcs_scan_secret_findings()
     get_pipeline_runs_data()
-    print('Done')
+    color_print("Get CAS Metrics -  v1.0 - Completed", Colors.GREEN)
