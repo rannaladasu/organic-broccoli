@@ -20,10 +20,52 @@ Ensure the following environment variables are set:
 python cas_metrics.py
 ```
 
-## Examples
-Here are some examples of how to set the environment variables and run the script.
+### Debugging
 
-If you are running it in windows powershell, you can also set the env variables right on the powershell command line like this:
+The script includes debugging functionality. You can enable different debug modes to log detailed information about the execution process.
+
+- **Basic Debug Mode**: Use this to log important events and errors.
+  - To enable it, set the environment variable `DEBUG_MODE=1` or use the `--debug` command-line argument.
+  
+- **Deep Debug Mode**: Provides additional detailed logging, including API request details and the actual API responses.
+  - To enable Deep Debug Mode, set the environment variable `DEEP_DEBUG_MODE=1` or use the `--deep-debug` command-line argument.
+  - Logs will be saved in `debug_log.txt`.
+
+### Enabling Debug Modes
+
+You can enable the debug modes using environment variables or command-line arguments:
+
+#### 1. Using Environment Variables
+
+For **Basic Debug Mode**:
+```bash
+export DEBUG_MODE=1
+```
+
+For **Deep Debug Mode**:
+```bash
+export DEEP_DEBUG_MODE=1
+```
+
+#### 2. Using Command-Line Arguments
+
+For **Basic Debug Mode**:
+```bash
+python cas_metrics.py --debug
+```
+
+For **Deep Debug Mode**:
+```bash
+python cas_metrics.py --deep-debug
+```
+
+### Example Command
+
+```bash
+python cas_metrics.py --debug
+```
+
+If you're running the script on **Windows PowerShell**, you can set environment variables as follows:
 ```bash
 PS C:\Users\cmartinsjr\Documents\Repositories\organic-broccoli-main\organic-broccoli-main> $env:PRISMA_API_URL="https://api2.prismacloud.io"
 PS C:\Users\cmartinsjr\Documents\Repositories\organic-broccoli-main\organic-broccoli-main> $env:PRISMA_ACCESS_KEY_ID="*****************"
@@ -31,15 +73,11 @@ PS C:\Users\cmartinsjr\Documents\Repositories\organic-broccoli-main\organic-broc
 PS C:\Users\cmartinsjr\Documents\Repositories\organic-broccoli-main\organic-broccoli-main> python cas_metrics.py
 ```
 
-You can run it directly in python like this: 
+You can also run it directly in Python:
 ```bash
 PS C:\Users\cmartinsjr\Documents\Repositories\organic-broccoli-main\organic-broccoli-main> python
 Python 3.12.1 (tags/v3.12.1:2305ca5, Dec  7 2023, 22:03:25) [MSC v.1937 64 bit (AMD64)] on win32
 Type "help", "copyright", "credits" or "license" for more information.
->>> print(PRISMA_API_URL)
-Traceback (most recent call last):
-  File "<stdin>", line 1, in <module>
-NameError: name 'PRISMA_API_URL' is not defined
 >>> import os
 >>> os.environ['PRISMA_API_URL'] = "https://api2.prismacloud.io"
 >>> os.environ['PRISMA_ACCESS_KEY_ID'] = "*******************"
@@ -54,3 +92,39 @@ Get CAS Metrics -  v1.0 - Initiated
 80% of High code issues blocked: False - 39.0%
 Get CAS Metrics -  v1.0 - Completed
 ```
+
+### Debug Log File
+
+If **Deep Debug Mode** is enabled, a `debug_log.txt` file will be created. It will contain detailed logs for the following events:
+- Authentication process.
+- API request details (method, endpoint, payload).
+- Full API response in JSON format (if available).
+
+The log entries will be timestamped and look like this:
+```
+[2025-03-25 15:00:00] Making POST request to https://api.prismacloud.io/bridgecrew/api/v1/pipeline-risks/export
+API Response:
+{
+    "status": "success",
+    "data": [...],
+    ...
+}
+```
+
+### Examples
+
+#### Example 1: Basic Debug Mode
+
+```bash
+python cas_metrics.py --debug
+```
+
+This will log critical events such as the start and end of the script, any missing environment variables, and basic request/response status.
+
+#### Example 2: Deep Debug Mode
+
+```bash
+python cas_metrics.py --deep-debug
+```
+
+In this case, detailed information such as API requests, full response bodies, and timestamps will be logged in `debug_log.txt` for thorough analysis.

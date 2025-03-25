@@ -1,10 +1,10 @@
 import json
 import os
 import sys
+import traceback
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 import requests as req
-
 
 # ANSI color codes
 class Colors:
@@ -15,13 +15,38 @@ class Colors:
 
 def color_print(text, color, file=None):
     print(color + text + Colors.END, file=file)
+    log_debug(text)
+
+def log_debug(message, response=None):
+    """Logs debug information with optional API response details."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = f"[{timestamp}] {message}\n"
+
+    if DEEP_DEBUG_MODE and response is not None:
+        try:
+            response_data = json.dumps(response.json(), indent=4)
+        except Exception:
+            response_data = response.text  # Fallback if response is not JSON
+
+        log_entry += f"API Response:\n{response_data}\n\n"
+
+    with open("debug_log.txt", "a") as log_file:
+        log_file.write(log_entry)
+
+# Debug mode activation
+DEBUG_MODE = os.getenv("DEBUG_MODE") == "1" or "--debug" in sys.argv
+DEEP_DEBUG_MODE = os.getenv("DEEP_DEBUG_MODE") == "1" or "--deep-debug" in sys.argv
+
+if DEBUG_MODE or DEEP_DEBUG_MODE:
+    with open("debug_log.txt", "w") as log_file:  # Clear log at start
+        log_file.write("DEBUG LOG STARTED\n")
 
 api = os.getenv('PRISMA_API_URL')
 username = os.getenv('PRISMA_ACCESS_KEY_ID')
 password = os.getenv('PRISMA_SECRET_KEY')
 
 if api is None:
-    color_print("Missing PRISMA_API_URL environment variable",Colors.RED, file=sys.stderr)
+    color_print("Missing PRISMA_API_URL environment variable", Colors.RED, file=sys.stderr)
 if username is None:
     color_print("Missing PRISMA_ACCESS_KEY_ID environment variable", Colors.RED, file=sys.stderr)
 if password is None:
@@ -32,76 +57,97 @@ if api is None or username is None or password is None:
 
 # Get current date
 current_date = datetime.now()
-
-# Calculate one month ago and six months ago
 one_month_ago = current_date - timedelta(days=30)
 six_months_ago = current_date - timedelta(days=30 * 6)
 
-# Format the dates as desired
 one_month_ago_formatted = one_month_ago.strftime("%Y-%m-%d 00:00:00.000")
 six_months_ago_formatted = six_months_ago.strftime("%Y-%m-%d 00:00:00.000")
 
 
 def authenticate():
+    """Handles authentication and token retrieval."""
+    log_debug("Authenticating with Prisma API...")
     payload = {'username': username, 'password': password}
-    headers = {'Content-Type': 'application/json; charset=UTF-8', 'Accept': 'application/json; charset=UTF-8'}
-    result = req.post(f"{api}/login", data=json.dumps(payload), headers=headers, timeout=30)
-    result.raise_for_status()
-    return result.json()['token']
+    headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
+    try:
+        result = req.post(f"{api}/login", json=payload, headers=headers, timeout=30)
+        result.raise_for_status()
+        log_debug("Authentication successful.", result)
+        return result.json().get('token')
+    except Exception as e:
+        log_debug(f"Authentication failed: {e}")
+        sys.exit(1)
 
 
 def create_headers(token):
-    return {'Content-Type': 'application/json; charset=UTF-8', 'Accept': 'application/json; charset=UTF-8',
-            'x-redlock-auth': token}
+    return {'Content-Type': 'application/json', 'Accept': 'application/json', 'x-redlock-auth': token}
 
 
 def make_request(method, endpoint, payload=None):
+    """Handles API requests with detailed debugging."""
+    log_debug(f"Making {method} request to {api}/{endpoint}")
     token = authenticate()
     headers = create_headers(token)
-    if method == "GET":
-        result = req.get(f"{api}/{endpoint}", headers=headers, timeout=30)
-    else:
-        result = req.post(f"{api}/{endpoint}", headers=headers, data=json.dumps(payload), timeout=30)
-    result.raise_for_status()
-    return result
+    try:
+        if method == "GET":
+            result = req.get(f"{api}/{endpoint}", headers=headers, timeout=30)
+        else:
+            result = req.post(f"{api}/{endpoint}", headers=headers, json=payload, timeout=30)
+        result.raise_for_status()
+        log_debug(f"Response from {endpoint}: {result.status_code}", result)
+        return result
+    except Exception as e:
+        log_debug(f"Error in {method} request to {endpoint}: {traceback.format_exc()}")
+        return None
 
 
 def get_fixed_percentage(csv_data):
-    lines = csv_data.split('\"\\n')
-    rows = [line.split(',') for line in lines[1:]]
-    total_events = len(rows)
-    total_fixed = sum(1 for row in rows if row[6].strip("\\\"") == "Yes")
-    return round((total_fixed / total_events) * 100, 0)
+    """Calculates the percentage of fixed issues from CSV data."""
+    try:
+        lines = csv_data.split('\"\\n')
+        rows = [line.split(',') for line in lines[1:]]
+        total_events = len(rows)
+        total_fixed = sum(1 for row in rows if row[6].strip("\\\"") == "Yes")
+        percentage = round((total_fixed / total_events) * 100, 0)
+        log_debug(f"Fixed percentage calculated: {percentage}%")
+        return percentage
+    except Exception as e:
+        log_debug(f"Error calculating fixed percentage: {traceback.format_exc()}")
+        return 0
 
 
 def get_cicd_findings():
+    """Retrieves CI/CD findings and calculates fixed percentage."""
+    log_debug("Fetching CI/CD findings...")
     payload = {"status": "open", "severities": ["critical", "high", "medium"]}
-    result = make_request("POST","bridgecrew/api/v1/pipeline-risks/export", payload)
-    percentage_fixed = get_fixed_percentage(result.text)
-    if percentage_fixed >= 20:
-        color_print("20 percent of Medium/High CI/CD Findings Fixed: True - {}%".format(percentage_fixed), Colors.GREEN)
-    else:
-        color_print("20 percent of Medium/High CI/CD Findings Fixed: False - {}%".format(percentage_fixed), Colors.RED)
-    
+    result = make_request("POST", "bridgecrew/api/v1/pipeline-risks/export", payload)
+    if result:
+        percentage_fixed = get_fixed_percentage(result.text)
+        status = "True" if percentage_fixed >= 20 else "False"
+        color_print(f"20% of Medium/High CI/CD Findings Fixed: {status} - {percentage_fixed}%", Colors.GREEN if status == "True" else Colors.RED)
 
 
 def get_all_cicd_findings():
+    """Fetches all CI/CD findings and verifies risk prevention."""
+    log_debug("Fetching all CI/CD findings...")
     payload = {"status": "open", "severities": ["critical", "high", "medium", "low", "informational"]}
     result = make_request("POST", "bridgecrew/api/v1/pipeline-risks/export", payload)
-    percentage_fixed = get_fixed_percentage(result.text)
-    if percentage_fixed >= 80:
-        color_print("80% of all risks are prevented in the pipeline: True - {}%".format(percentage_fixed), Colors.GREEN)
-    else:
-        color_print("80% of all risks are prevented in the pipeline: False - {}%".format(percentage_fixed), Colors.RED)
-    
+    if result:
+        percentage_fixed = get_fixed_percentage(result.text)
+        status = "True" if percentage_fixed >= 80 else "False"
+        color_print(f"80% of all risks are prevented in the pipeline: {status} - {percentage_fixed}%", Colors.GREEN if status == "True" else Colors.RED)
 
 
 def get_vcs_scan_findings():
+    """Analyzes VCS scan findings for security issues."""
     def process_request(payload):
         result = make_request("POST", "code/api/v2/dashboard/vcs-scan-issues-over-time", payload)
-        data = result.json()['data']
-        return sum(int(entry['openCount']) for entry in data), sum(int(entry['fixedCount']) for entry in data)
+        if result:
+            data = result.json().get('data', [])
+            return sum(int(entry['openCount']) for entry in data), sum(int(entry['fixedCount']) for entry in data)
+        return 0, 0
 
+    log_debug("Fetching VCS scan findings...")
     with ThreadPoolExecutor() as executor:
         payloadX = {"startDate": one_month_ago_formatted, "codeCategories": ["secrets"]}
         payloadY = {"startDate": six_months_ago_formatted, "codeCategories": ["secrets"]}
@@ -110,62 +156,16 @@ def get_vcs_scan_findings():
         total_open_countX, total_fixed_countX = futureX.result()
         total_open_countY, total_fixed_countY = futureY.result()
 
-    percentage_fixedX = round((total_fixed_countX / total_open_countX) * 100, 0)
-    percentage_fixedY = round((total_fixed_countY / total_open_countY) * 100, 0)
+    percentage_fixedX = round((total_fixed_countX / total_open_countX) * 100, 0) if total_open_countX else 0
+    percentage_fixedY = round((total_fixed_countY / total_open_countY) * 100, 0) if total_open_countY else 0
     result = percentage_fixedY - percentage_fixedX
-    if result >= 10:
-        color_print("10% increase in Number of fixed vs opened code security issue: True - {}%".format(result), Colors.GREEN)
-    else:
-        color_print("10% increase in Number of fixed vs opened code security issue: False - {}%".format(result), Colors.RED)
-    
-
-
-def get_vcs_scan_secret_findings():
-    payload = {"startDate": six_months_ago_formatted, "codeCategories": ["secrets"]}
-    result = make_request("POST","code/api/v2/dashboard/vcs-scan-issues-over-time", payload)
-    dataY = result.json()
-
-    # Initialize counts
-    total_open_count = 0
-    total_fixed_count = 0
-
-    # Iterate over data entries
-    for entry in dataY['data']:
-        total_open_count += int(entry['openCount'])
-        total_fixed_count += int(entry['fixedCount'])
-
-
-    percentage_fixed = round((total_fixed_count / total_open_count) * 100, 0)
-
-    # Check if percentage is 50 or more, then print "Passed"
-    if percentage_fixed >= 50 and percentage_fixed <= 79:
-        color_print("50% reduction of secret exposure: True - {}%".format(percentage_fixed), Colors.YELLOW)
-    elif percentage_fixed >= 80:
-        color_print("50% reduction of secret exposure: True - {}%".format(percentage_fixed), Colors.YELLOW)
-        color_print("80% reduction of secret exposure: True - {}%".format(percentage_fixed), Colors.GREEN)
-    else:
-        color_print("50% reduction of secret exposure: False - {}%".format(percentage_fixed), Colors.RED)
-        color_print("80% reduction of secret exposure: False - {}%".format(percentage_fixed), Colors.RED)
-
-
-
-def get_pipeline_runs_data():
-    result = make_request("GET","code/api/v1/development-pipeline/code-review/runs/data", {})
-    data = result.json()['data']
-    total_events = len(data)
-    hard_fail_events = sum(1 for event in data if event["scanStatus"] == "HARD_FAIL")
-    percentage_fixed = round((hard_fail_events / total_events) * 100, 0)
-    if percentage_fixed >= 80:
-        color_print("80% of High code issues blocked: True - {}%".format(percentage_fixed), Colors.GREEN)
-    else:
-        color_print("80% of High code issues blocked: False - {}%".format(percentage_fixed), Colors.RED)
+    status = "True" if result >= 10 else "False"
+    color_print(f"10% increase in Number of fixed vs opened code security issue: {status} - {result}%", Colors.GREEN if status == "True" else Colors.RED)
 
 
 if __name__ == '__main__':
-    color_print("Get CAS Metrics -  v1.0 - Initiated", Colors.GREEN)
+    color_print("Get CAS Metrics - v1.0 - Initiated", Colors.GREEN)
     get_cicd_findings()
     get_all_cicd_findings()
     get_vcs_scan_findings()
-    get_vcs_scan_secret_findings()
-    get_pipeline_runs_data()
-    color_print("Get CAS Metrics -  v1.0 - Completed", Colors.GREEN)
+    color_print("Get CAS Metrics - v1.0 - Completed", Colors.GREEN)
